@@ -5,15 +5,13 @@ import numpy as np
 import os
 import pyarrow.parquet as pq
 import pyarrow as pa
+import plotly.express as px
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
-import plotly.express as px
 
-st.set_page_config(layout="wide")
-
-# --- Constants ---
+# --- Settings ---
 CSV_PATH = 'fno_stocks.csv'
 PARQUET_PATH = 'data/trend_vectors.parquet'
 START_DATE = '2021-06-01'
@@ -21,7 +19,9 @@ END_DATE = '2024-06-01'
 WINDOW_SIZE = 7
 N_CLUSTERS = 5
 
-# --- Load CSV with sector & market cap ---
+st.set_page_config(layout="wide")
+
+# --- Load stock metadata ---
 @st.cache_data
 def load_stock_metadata(path=CSV_PATH):
     df = pd.read_csv(path)
@@ -45,7 +45,7 @@ def apply_filters(stock_meta):
     st.sidebar.markdown(f"**{len(filtered)} stocks selected**")
     return filtered
 
-# --- Fetch stock data ---
+# --- Fetch historical stock data ---
 @st.cache_data
 def fetch_data(tickers, start, end):
     data = yf.download(tickers, start=start, end=end)
@@ -53,15 +53,14 @@ def fetch_data(tickers, start, end):
     if 'Adj Close' in data.columns:
         adj_close = data['Adj Close']
     else:
-        adj_close = data  # fallback
+        adj_close = data
 
     if isinstance(adj_close, pd.Series):
         adj_close = adj_close.to_frame()
 
     return adj_close.dropna()
 
-# --- Trend vector extraction ---
-@st.cache_data
+# --- Trend vector extraction (NO CACHE because of list column) ---
 def compute_trend_vectors(data, window=7):
     trend_vectors = []
     for ticker in data.columns:
@@ -72,21 +71,22 @@ def compute_trend_vectors(data, window=7):
             trend_vectors.append({
                 'ticker': ticker,
                 'start_date': prices.index[i],
-                'vector': scaled.tolist()  # FIXED: convert to list
+                'vector': scaled.tolist()  # convert to list for storage
             })
     return pd.DataFrame(trend_vectors)
 
-
-# --- Save & Load Parquet ---
+# --- Save/load trend data ---
 def save_to_parquet(df, path):
     df['vector'] = df['vector'].apply(lambda x: np.array(x))
     os.makedirs(os.path.dirname(path), exist_ok=True)
     pq.write_table(pa.Table.from_pandas(df), path)
 
 def load_from_parquet(path):
-    return pq.read_table(path).to_pandas()
+    df = pq.read_table(path).to_pandas()
+    df['vector'] = df['vector'].apply(lambda x: x.tolist())  # ensure JSON-safe if needed
+    return df
 
-# --- PCA + Clustering ---
+# --- PCA + KMeans clustering ---
 def reduce_and_cluster(df, n_clusters=5):
     X = np.stack(df['vector'].values)
     pca = PCA(n_components=2)
@@ -96,11 +96,11 @@ def reduce_and_cluster(df, n_clusters=5):
     df['cluster'] = kmeans.fit_predict(X_pca)
     return df
 
-# --- Main Streamlit App ---
+# --- Main App Logic ---
 def main():
-    st.title("📊 F&O Stock Trend Clustering (7-Day Windows)")
+    st.title("📊 F&O Stock Trend Clustering (7-Day Rolling Windows)")
 
-    # Load and filter metadata
+    # Load & filter stock list
     stock_meta = load_stock_metadata()
     filtered_meta = apply_filters(stock_meta)
     TICKERS = filtered_meta['symbol'].tolist()
@@ -109,42 +109,41 @@ def main():
         st.warning("No stocks selected. Please adjust your filters.")
         return
 
-    # Check for saved data
+    # Load or compute trend vectors
     if not os.path.exists(PARQUET_PATH):
-        st.info("Fetching and processing data. This takes a minute...")
-        raw_data = fetch_data(TICKERS, START_DATE, END_DATE)
-        trend_df = compute_trend_vectors(raw_data, WINDOW_SIZE)
+        st.info("Fetching stock data & computing trend vectors...")
+        data = fetch_data(TICKERS, START_DATE, END_DATE)
+        trend_df = compute_trend_vectors(data, WINDOW_SIZE)
         save_to_parquet(trend_df, PARQUET_PATH)
-        st.success("Trend vectors saved for future use.")
+        st.success("Trend vectors saved.")
     else:
         trend_df = load_from_parquet(PARQUET_PATH)
 
-    # Reduce and cluster
+    # PCA + Clustering
     trend_df = reduce_and_cluster(trend_df, N_CLUSTERS)
 
-    # Merge metadata
+    # Merge back metadata
     trend_df = trend_df.merge(stock_meta, left_on='ticker', right_on='symbol', how='left')
 
-    # Cluster selection UI
+    # Cluster selection
     st.sidebar.markdown("### Cluster Explorer")
     selected_cluster = st.sidebar.selectbox("Select Cluster", sorted(trend_df['cluster'].unique()))
     num_samples = st.sidebar.slider("Samples to display", 1, 10, 5)
 
-    # Show plot
+    # Show Cluster Plot
     st.markdown(f"### Cluster {selected_cluster} — {len(trend_df[trend_df['cluster'] == selected_cluster])} windows")
     fig = px.scatter(
         trend_df, x='pca_1', y='pca_2',
         color='sector',
         hover_data=['ticker', 'market_cap', 'start_date'],
-        title="Trend Cluster Map (PCA)",
+        title="Trend Cluster Map (PCA Reduced)",
         opacity=0.7
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # Show trend previews
+    # Sample trend previews
     st.subheader("Sample Trend Shapes")
     sample_df = trend_df[trend_df['cluster'] == selected_cluster].head(num_samples)
-
     for _, row in sample_df.iterrows():
         st.caption(f"{row['ticker']} | {row['sector']} | {row['market_cap']} | {row['start_date'].date()}")
         st.line_chart(row['vector'])
