@@ -72,9 +72,10 @@ def compute_trend_vectors(data, window=7):
             trend_vectors.append({
                 'ticker': ticker,
                 'start_date': prices.index[i],
-                'vector': scaled.tolist()
+                'vector': scaled.tolist()  # FIXED: convert to list
             })
     return pd.DataFrame(trend_vectors)
+
 
 # --- Save & Load Parquet ---
 def save_to_parquet(df, path):
