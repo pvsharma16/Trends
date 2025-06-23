@@ -151,5 +151,36 @@ def main():
         st.caption(f"{row['ticker']} | {row['sector']} | {row['market_cap']} | {row['start_date'].date()}")
         st.line_chart(row['vector'])
 
+    # --- Sector Trend Comparison ---
+    with st.expander("📊 Sector-wise Trend Comparison", expanded=False):
+        selected_sectors = st.multiselect("Compare Sectors", clustered['sector'].dropna().unique().tolist())
+
+        if selected_sectors:
+            sector_avg_data = {}
+            for sector in selected_sectors:
+                vectors = clustered[clustered['sector'] == sector]['vector']
+                if not vectors.empty:
+                    stacked = np.stack(vectors.values)
+                    mean_vector = stacked.mean(axis=0)
+                    sector_avg_data[sector] = mean_vector
+
+            # Combine for plotting
+            avg_df = pd.DataFrame(sector_avg_data)
+            avg_df.index = [f"Day {i+1}" for i in range(avg_df.shape[0])]
+            st.line_chart(avg_df)
+
+            # Optional: Violin Plot
+            melted = []
+            for sector in selected_sectors:
+                for vec in clustered[clustered['sector'] == sector]['vector']:
+                    for i, v in enumerate(vec):
+                        melted.append({'sector': sector, 'day': f'Day {i+1}', 'value': v})
+
+            df_v = pd.DataFrame(melted)
+            fig = px.violin(df_v, x='day', y='value', color='sector', box=True, points='outliers')
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Select one or more sectors to compare.")
+
 if __name__ == "__main__":
     main()
