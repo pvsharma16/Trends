@@ -102,5 +102,5 @@ def main():
         st.caption(f"{sample['ticker']} | {sample['start_date'].date()}")
         st.line_chart(sample['vector'])
 
-if __name__ == "__main__":
-    main()
+#if __name__ == "__main__":
+#    main()
