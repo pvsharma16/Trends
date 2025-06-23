@@ -23,8 +23,19 @@ N_CLUSTERS = 5
 # --- Data Loading ---
 @st.cache_data
 def fetch_data(tickers, start, end):
-    data = yf.download(tickers, start=start, end=end)['Adj Close']
-    return data.dropna()
+    data = yf.download(tickers, start=start, end=end)
+    
+    # Always work with 'Adj Close'
+    if 'Adj Close' in data.columns:
+        adj_close = data['Adj Close']
+    else:
+        adj_close = data  # Single ticker
+
+    # If user selected just one ticker, Yahoo returns a Series — convert to DataFrame
+    if isinstance(adj_close, pd.Series):
+        adj_close = adj_close.to_frame()
+
+    return adj_close.dropna()
 
 @st.cache_data
 def compute_trend_vectors(data, window=7):
